@@ -112,6 +112,80 @@ function isImageMimeType(mimeType: string): boolean {
   return mimeType.startsWith('image/');
 }
 
+interface EmailData {
+  from: string;
+  fromName: string;
+  to: string;
+  cc?: string;
+  replyTo?: string;
+  subject: string;
+  date: Date;
+  text?: string;
+  html?: string;
+}
+
+function generatePlainTextEmail(emailData: EmailData): string {
+  const lines: string[] = [];
+  
+  // Header section
+  lines.push('='.repeat(60));
+  lines.push('EMAIL MESSAGE');
+  lines.push('='.repeat(60));
+  lines.push('');
+  
+  // Metadata
+  lines.push(`From: ${emailData.fromName !== emailData.from ? `${emailData.fromName} <${emailData.from}>` : emailData.from}`);
+  lines.push(`To: ${emailData.to}`);
+  if (emailData.cc) {
+    lines.push(`CC: ${emailData.cc}`);
+  }
+  if (emailData.replyTo && emailData.replyTo !== emailData.from) {
+    lines.push(`Reply-To: ${emailData.replyTo}`);
+  }
+  lines.push(`Subject: ${emailData.subject}`);
+  lines.push(`Date: ${emailData.date.toUTCString()}`);
+  
+  lines.push('');
+  lines.push('-'.repeat(60));
+  lines.push('BODY');
+  lines.push('-'.repeat(60));
+  lines.push('');
+  
+  // Body content - prefer plain text, fall back to converted HTML
+  if (emailData.text) {
+    lines.push(emailData.text.trim());
+  } else if (emailData.html) {
+    // Simple HTML to text conversion for the .txt file
+    const textFromHtml = emailData.html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '• ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    lines.push(textFromHtml);
+  } else {
+    lines.push('(No content)');
+  }
+  
+  lines.push('');
+  lines.push('='.repeat(60));
+  lines.push('END OF EMAIL');
+  lines.push('='.repeat(60));
+  
+  return lines.join('\n');
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -172,18 +246,44 @@ export default {
       const to = email.to?.map((t) => t.address).join(', ') || message.to || 'Unknown';
       const subject = email.subject || '(No Subject)';
       const date = email.date ? new Date(email.date) : new Date();
+      const cc = email.cc && email.cc.length > 0 ? email.cc.map((c) => c.address).join(', ') : undefined;
+      const replyTo = email.replyTo && email.replyTo.length > 0 ? email.replyTo[0].address : undefined;
 
-      // Convert HTML to Markdown (or use plain text)
+      // Convert HTML to Markdown (or use plain text) for Discord embed
       const body = getMarkdownContent(email);
 
-      // Process attachments
+      // Generate plain text email.txt
+      const emailTxtContent = generatePlainTextEmail({
+        from,
+        fromName,
+        to,
+        cc,
+        replyTo,
+        subject,
+        date,
+        text: email.text,
+        html: email.html,
+      });
+      const emailTxtBytes = new TextEncoder().encode(emailTxtContent);
+
+      // Process attachments - start with email.txt
       const parsedAttachments: ParsedAttachment[] = [];
       const skippedAttachments: string[] = [];
       let firstImageFilename: string | null = null;
 
+      // Add email.txt as the first attachment
+      parsedAttachments.push({
+        filename: 'email.txt',
+        mimeType: 'text/plain',
+        content: emailTxtBytes,
+        size: emailTxtBytes.length,
+        isImage: false,
+      });
+
+      // Process email attachments
       if (email.attachments && email.attachments.length > 0) {
         for (const att of email.attachments) {
-          const filename = sanitizeFilename(att.filename || `attachment_${parsedAttachments.length + 1}`);
+          const filename = sanitizeFilename(att.filename || `attachment_${parsedAttachments.length}`);
           const mimeType = att.mimeType || 'application/octet-stream';
           const content = att.content;
           const size = content instanceof ArrayBuffer ? content.byteLength : content.length;
@@ -195,7 +295,7 @@ export default {
             continue;
           }
 
-          // Check max files limit
+          // Check max files limit (reserve 1 slot for email.txt)
           if (parsedAttachments.length >= MAX_FILES_PER_MESSAGE) {
             skippedAttachments.push(`${filename} (max files reached)`);
             continue;
@@ -240,25 +340,21 @@ export default {
       };
 
       // Add CC if present
-      if (email.cc && email.cc.length > 0) {
-        const ccAddresses = email.cc.map((c) => c.address).join(', ');
+      if (cc) {
         embed.fields!.push({
           name: '📋 CC',
-          value: truncate(ccAddresses, MAX_FIELD_VALUE),
+          value: truncate(cc, MAX_FIELD_VALUE),
           inline: true,
         });
       }
 
       // Add Reply-To if different from From
-      if (email.replyTo && email.replyTo.length > 0) {
-        const replyTo = email.replyTo[0].address;
-        if (replyTo && replyTo !== from) {
-          embed.fields!.push({
-            name: '↩️ Reply-To',
-            value: truncate(replyTo, MAX_FIELD_VALUE),
-            inline: true,
-          });
-        }
+      if (replyTo && replyTo !== from) {
+        embed.fields!.push({
+          name: '↩️ Reply-To',
+          value: truncate(replyTo, MAX_FIELD_VALUE),
+          inline: true,
+        });
       }
 
       // Add body content (Markdown formatted)
@@ -271,12 +367,13 @@ export default {
         embed.image = { url: `attachment://${firstImageFilename}` };
       }
 
-      // Add info about attachments
-      if (parsedAttachments.length > 0 || skippedAttachments.length > 0) {
+      // Add info about attachments (excluding email.txt from the count shown to user)
+      const userAttachments = parsedAttachments.filter(a => a.filename !== 'email.txt');
+      if (userAttachments.length > 0 || skippedAttachments.length > 0) {
         const attachmentLines: string[] = [];
 
-        // List included attachments
-        for (const att of parsedAttachments) {
+        // List included attachments (not email.txt)
+        for (const att of userAttachments) {
           const icon = att.isImage ? '🖼️' : '📎';
           attachmentLines.push(`${icon} ${att.filename} (${formatFileSize(att.size)})`);
         }
@@ -287,7 +384,7 @@ export default {
         }
 
         embed.fields!.push({
-          name: `📁 Attachments (${parsedAttachments.length}${skippedAttachments.length > 0 ? ` + ${skippedAttachments.length} skipped` : ''})`,
+          name: `📁 Attachments (${userAttachments.length}${skippedAttachments.length > 0 ? ` + ${skippedAttachments.length} skipped` : ''})`,
           value: truncate(attachmentLines.join('\n'), MAX_FIELD_VALUE),
           inline: false,
         });
@@ -304,7 +401,7 @@ export default {
         payload.attachments = parsedAttachments.map((att, index) => ({
           id: index,
           filename: att.filename,
-          description: att.isImage ? 'Email image' : 'Email attachment',
+          description: att.filename === 'email.txt' ? 'Full email as plain text' : (att.isImage ? 'Email image' : 'Email attachment'),
         }));
       }
 
