@@ -2,7 +2,11 @@ import PostalMime from 'postal-mime';
 import TurndownService from 'turndown';
 
 export interface Env {
-  DISCORD_WEBHOOK_URL: string;
+  // JSON string mapping domains to Discord webhook URLs
+  // Example: {"n9a.us":"https://discord.com/api/webhooks/...","ipcow.com":"https://discord.com/api/webhooks/..."}
+  DOMAIN_WEBHOOKS: string;
+  // Optional: fallback webhook if domain not found in mapping
+  DEFAULT_WEBHOOK_URL?: string;
 }
 
 // Discord embed color (blue)
@@ -236,6 +240,30 @@ async function sendToDiscordWithAttachments(
 
 export default {
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Extract domain from the "to" address
+    const toDomain = message.to.split('@')[1]?.toLowerCase();
+    
+    // Parse the domain-to-webhook mapping
+    let webhookUrl: string | undefined;
+    try {
+      const domainWebhooks: Record<string, string> = JSON.parse(env.DOMAIN_WEBHOOKS || '{}');
+      webhookUrl = domainWebhooks[toDomain];
+    } catch (e) {
+      console.error('Failed to parse DOMAIN_WEBHOOKS:', e);
+    }
+    
+    // Fall back to default webhook if domain not found
+    if (!webhookUrl) {
+      webhookUrl = env.DEFAULT_WEBHOOK_URL;
+    }
+    
+    // If still no webhook, log and reject
+    if (!webhookUrl) {
+      console.error(`No webhook configured for domain: ${toDomain}`);
+      message.setReject(`No webhook configured for ${toDomain}`);
+      return;
+    }
+
     try {
       // Parse the email using postal-mime
       const email = await PostalMime.parse(message.raw);
@@ -285,7 +313,15 @@ export default {
         for (const att of email.attachments) {
           const filename = sanitizeFilename(att.filename || `attachment_${parsedAttachments.length}`);
           const mimeType = att.mimeType || 'application/octet-stream';
-          const content = att.content;
+          
+          // Convert content to Uint8Array if it's a string
+          let content: ArrayBuffer | Uint8Array;
+          if (typeof att.content === 'string') {
+            content = new TextEncoder().encode(att.content);
+          } else {
+            content = att.content;
+          }
+          
           const size = content instanceof ArrayBuffer ? content.byteLength : content.length;
           const isImage = isImageMimeType(mimeType);
 
@@ -406,7 +442,7 @@ export default {
       }
 
       // Send to Discord with attachments
-      const response = await sendToDiscordWithAttachments(env.DISCORD_WEBHOOK_URL, payload, parsedAttachments);
+      const response = await sendToDiscordWithAttachments(webhookUrl, payload, parsedAttachments);
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -430,7 +466,7 @@ export default {
             embeds: [embed],
           };
 
-          const retryResponse = await sendToDiscordWithAttachments(env.DISCORD_WEBHOOK_URL, simplePayload, []);
+          const retryResponse = await sendToDiscordWithAttachments(webhookUrl, simplePayload, []);
           if (!retryResponse.ok) {
             console.error(`Discord webhook retry failed: ${retryResponse.status}`);
           }
@@ -449,7 +485,7 @@ export default {
           username: 'Email Bot',
           content: `⚠️ **Error processing email**\nFrom: ${message.from}\nTo: ${message.to}\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
         };
-        await sendToDiscordWithAttachments(env.DISCORD_WEBHOOK_URL, errorPayload, []);
+        await sendToDiscordWithAttachments(webhookUrl, errorPayload, []);
       } catch (notifyError) {
         console.error('Failed to send error notification:', notifyError);
       }

@@ -8,6 +8,18 @@ compatibility_flags = ["nodejs_compat"]
 [observability]
 enabled = true
 
-# Environment variables - the webhook URL will be set as a secret
-# Run: wrangler secret put DISCORD_WEBHOOK_URL
-# Then paste your Discord webhook URL when prompted
+# ============================================================
+# SECRETS CONFIGURATION
+# ============================================================
+# Set these secrets via Cloudflare Dashboard or wrangler CLI:
+#
+# REQUIRED: Domain to webhook mapping (JSON object)
+# wrangler secret put DOMAIN_WEBHOOKS
+# Example value:
+# {"n9a.us":"https://discord.com/api/webhooks/xxx/yyy","ipcow.com":"https://discord.com/api/webhooks/aaa/bbb"}
+#
+# OPTIONAL: Fallback webhook for unmapped domains
+# wrangler secret put DEFAULT_WEBHOOK_URL
+# Example value:
+# https://discord.com/api/webhooks/xxx/yyy
+# ============================================================
