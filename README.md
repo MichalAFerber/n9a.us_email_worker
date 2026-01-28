@@ -229,4 +229,4 @@ Make sure Email Routing is properly enabled and the routing rule is active in Cl
 
 ## License
 
-MIT
+[MIT](LICENSE)
