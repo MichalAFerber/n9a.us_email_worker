@@ -39,7 +39,6 @@ Set a JSON object mapping domains to webhooks:
 ```
 
 In Cloudflare Dashboard:
-
 1. Go to **Workers & Pages** → `email-to-discord`
 2. **Settings** → **Variables and Secrets**
 3. Add secret `DOMAIN_WEBHOOKS` with the JSON above
@@ -57,7 +56,6 @@ In Cloudflare Dashboard:
 ### 1. Create Discord Webhooks
 
 For each domain/channel:
-
 1. Open Discord → go to the target channel
 2. Click gear icon → Integrations → Webhooks
 3. Click "New Webhook" and copy the URL
@@ -76,14 +74,12 @@ npm run deploy
 In Cloudflare Dashboard → Workers & Pages → `email-to-discord` → Settings → Variables and Secrets:
 
 **Add `DOMAIN_WEBHOOKS`:**
-
 ```json
 {"n9a.us":"https://discord.com/api/webhooks/...","ipcow.com":"https://discord.com/api/webhooks/..."}
 ```
 
 **Optionally add `DEFAULT_WEBHOOK_URL`:**
-
-```txt
+```
 https://discord.com/api/webhooks/...
 ```
 
@@ -102,7 +98,6 @@ Repeat for each domain (n9a.us, ipcow.com, etc.)
 ## Usage
 
 Once configured:
-
 - Emails to `*@n9a.us` → Discord channel for n9a.us
 - Emails to `*@ipcow.com` → Discord channel for ipcow.com
 - Emails to unmapped domains → `DEFAULT_WEBHOOK_URL` (if set) or rejected
@@ -130,7 +125,6 @@ The Discord message includes:
 
 | Feature | Behavior |
 |---------|----------|
-
 | Images | First image is embedded in the embed, all images are attached |
 | Files | Uploaded as Discord attachments (downloadable) |
 | Size Limit | Files over 8MB are skipped (Discord's limit) |
@@ -148,7 +142,6 @@ const EMBED_COLOR = 0x5865F2; // Discord blurple
 ```
 
 Some common colors:
-
 - `0x5865F2` - Discord Blurple
 - `0x57F287` - Green
 - `0xFEE75C` - Yellow
@@ -188,7 +181,6 @@ npm run tail
 ```
 
 Or check logs in the Cloudflare Dashboard:
-
 1. Go to **Workers & Pages**
 2. Select your `email-to-discord` worker
 3. Click **Logs**
@@ -197,7 +189,6 @@ Or check logs in the Cloudflare Dashboard:
 
 | Limit | Value |
 |-------|-------|
-
 | Discord embed description | 4,096 characters |
 | Discord field value | 1,024 characters |
 | Discord embed title | 256 characters |
@@ -214,7 +205,6 @@ Content exceeding these limits is automatically truncated or skipped.
 1. Check the worker logs for errors: `npm run tail`
 2. Verify the webhook URL is correctly set: `wrangler secret list`
 3. Test the webhook directly with curl:
-
    ```bash
    curl -X POST "YOUR_WEBHOOK_URL" \
      -H "Content-Type: application/json" \

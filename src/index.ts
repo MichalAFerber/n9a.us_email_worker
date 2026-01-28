@@ -1,5 +1,4 @@
 import PostalMime from 'postal-mime';
-import TurndownService from 'turndown';
 
 export interface Env {
   // JSON string mapping domains to Discord webhook URLs
@@ -46,59 +45,84 @@ interface ParsedAttachment {
   contentId?: string;
 }
 
-// Configure Turndown for Discord-compatible Markdown
-function createTurndownService(): TurndownService {
-  const turndownService = new TurndownService({
-    headingStyle: 'atx',
-    hr: '---',
-    bulletListMarker: '-',
-    codeBlockStyle: 'fenced',
-    emDelimiter: '*',
-    strongDelimiter: '**',
-    linkStyle: 'inlined',
+// Convert HTML to Discord-compatible Markdown without requiring DOM
+function htmlToMarkdown(html: string): string {
+  let text = html;
+  
+  // Remove scripts and styles
+  text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+  text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
+  
+  // Convert headers
+  text = text.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, '# $1\n\n');
+  text = text.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, '## $1\n\n');
+  text = text.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, '### $1\n\n');
+  text = text.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, '#### $1\n\n');
+  text = text.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, '##### $1\n\n');
+  text = text.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, '###### $1\n\n');
+  
+  // Convert bold and italic
+  text = text.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, '**$2**');
+  text = text.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, '*$2*');
+  text = text.replace(/<(u)[^>]*>([\s\S]*?)<\/\1>/gi, '__$2__');
+  text = text.replace(/<(s|strike|del)[^>]*>([\s\S]*?)<\/\1>/gi, '~~$2~~');
+  
+  // Convert code
+  text = text.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
+  text = text.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, '```\n$1\n```\n');
+  
+  // Convert links - extract href and text
+  text = text.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+  
+  // Convert lists
+  text = text.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, '$1\n');
+  text = text.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, '$1\n');
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '• $1\n');
+  
+  // Convert blockquotes
+  text = text.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, (match, content) => {
+    return content.split('\n').map((line: string) => '> ' + line).join('\n') + '\n';
   });
-
-  // Remove images from markdown (we'll handle them as attachments)
-  turndownService.addRule('removeImages', {
-    filter: 'img',
-    replacement: () => '',
-  });
-
-  // Simplify tables for Discord (Discord doesn't support tables)
-  turndownService.addRule('simpleTables', {
-    filter: ['table', 'thead', 'tbody', 'tfoot', 'tr'],
-    replacement: (content) => content + '\n',
-  });
-
-  turndownService.addRule('tableCells', {
-    filter: ['th', 'td'],
-    replacement: (content) => content + ' | ',
-  });
-
-  return turndownService;
-}
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return text.substring(0, maxLength - 3) + '...';
+  
+  // Convert line breaks and paragraphs
+  text = text.replace(/<br\s*\/?>/gi, '\n');
+  text = text.replace(/<\/p>/gi, '\n\n');
+  text = text.replace(/<\/div>/gi, '\n');
+  text = text.replace(/<hr\s*\/?>/gi, '\n---\n');
+  
+  // Remove images (we handle them as attachments)
+  text = text.replace(/<img[^>]*>/gi, '');
+  
+  // Remove all remaining HTML tags
+  text = text.replace(/<[^>]+>/g, '');
+  
+  // Decode HTML entities
+  text = text.replace(/&nbsp;/gi, ' ');
+  text = text.replace(/&amp;/gi, '&');
+  text = text.replace(/&lt;/gi, '<');
+  text = text.replace(/&gt;/gi, '>');
+  text = text.replace(/&quot;/gi, '"');
+  text = text.replace(/&#39;/gi, "'");
+  text = text.replace(/&hellip;/gi, '…');
+  text = text.replace(/&mdash;/gi, '—');
+  text = text.replace(/&ndash;/gi, '–');
+  text = text.replace(/&#(\d+);/gi, (match, dec) => String.fromCharCode(dec));
+  
+  // Clean up whitespace
+  text = text.replace(/\r\n/g, '\n');
+  text = text.replace(/\n{3,}/g, '\n\n');
+  text = text.replace(/^\s+|\s+$/g, '');
+  
+  return text.trim();
 }
 
 function getMarkdownContent(email: { text?: string; html?: string }): string {
-  const turndownService = createTurndownService();
-
   if (email.html) {
     try {
-      let markdown = turndownService.turndown(email.html);
-      // Clean up excessive whitespace
-      markdown = markdown
-        .replace(/\r\n/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .replace(/^\s+|\s+$/g, '')
-        .trim();
-      return markdown;
+      const markdown = htmlToMarkdown(email.html);
+      if (markdown) return markdown;
     } catch (e) {
       console.error('Error converting HTML to Markdown:', e);
-      // Fall back to plain text
     }
   }
 
@@ -110,6 +134,11 @@ function getMarkdownContent(email: { text?: string; html?: string }): string {
   }
 
   return '*(No content)*';
+}
+
+function truncate(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.substring(0, maxLength - 3) + '...';
 }
 
 function isImageMimeType(mimeType: string): boolean {
@@ -241,19 +270,25 @@ async function sendToDiscordWithAttachments(
 export default {
   async email(message: ForwardableEmailMessage, env: Env, ctx: ExecutionContext): Promise<void> {
     // Extract domain from the "to" address
-    const toDomain = message.to.split('@')[1]?.toLowerCase();
+    const toDomain = message.to.split('@')[1]?.toLowerCase()?.trim();
+    
+    console.log(`Processing email to: ${message.to}, extracted domain: ${toDomain}`);
     
     // Parse the domain-to-webhook mapping
     let webhookUrl: string | undefined;
+    let domainWebhooks: Record<string, string> = {};
     try {
-      const domainWebhooks: Record<string, string> = JSON.parse(env.DOMAIN_WEBHOOKS || '{}');
+      domainWebhooks = JSON.parse(env.DOMAIN_WEBHOOKS || '{}');
+      console.log(`Configured domains: ${Object.keys(domainWebhooks).join(', ')}`);
       webhookUrl = domainWebhooks[toDomain];
+      console.log(`Webhook found for ${toDomain}: ${webhookUrl ? 'yes' : 'no'}`);
     } catch (e) {
       console.error('Failed to parse DOMAIN_WEBHOOKS:', e);
     }
     
     // Fall back to default webhook if domain not found
     if (!webhookUrl) {
+      console.log(`Using default webhook for domain: ${toDomain}`);
       webhookUrl = env.DEFAULT_WEBHOOK_URL;
     }
     
